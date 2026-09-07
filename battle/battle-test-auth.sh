@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 
-BATTLE_ENV="toolbox/.env.battle-test"
-FRONTEND_ENV="frontend/.env"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLBOX_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="${POPNPLAY_PROJECT_ROOT:-"$TOOLBOX_ROOT/../PopAndPlayRealTimeWebGamev5"}"
+
+BATTLE_ENV="$SCRIPT_DIR/.env.battle-test"
+FRONTEND_ENV="$PROJECT_ROOT/frontend/.env"
+
+battle_auth_finish() {
+  return "$1" 2>/dev/null || exit "$1"
+}
 
 if [ ! -f "$BATTLE_ENV" ]; then
-  echo "❌ $BATTLE_ENV introuvable"
-  return 1 2>/dev/null || exit 1
+  echo "❌ Credentials Battle introuvables : $BATTLE_ENV"
+  battle_auth_finish 1
 fi
 
 if [ ! -f "$FRONTEND_ENV" ]; then
-  echo "❌ $FRONTEND_ENV introuvable"
-  return 1 2>/dev/null || exit 1
+  echo "❌ Configuration frontend PopNPlay introuvable : $FRONTEND_ENV"
+  battle_auth_finish 1
 fi
 
 set -a
@@ -22,7 +30,7 @@ SUPABASE_ANON_KEY=$(grep '^VITE_SUPABASE_ANON_KEY=' "$FRONTEND_ENV" | head -1 | 
 
 if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
   echo "❌ Configuration Supabase introuvable dans $FRONTEND_ENV"
-  return 1 2>/dev/null || exit 1
+  battle_auth_finish 1
 fi
 
 get_token() {
@@ -60,22 +68,62 @@ sys.stdout.write(token)
 '
 }
 
-echo "🔐 Authentification Teacher A..."
-TOKEN_A=$(get_token "$TEACHER_A_EMAIL" "$TEACHER_A_PASSWORD") || {
-  echo "❌ Échec authentification Teacher A"
-  unset TOKEN_A TOKEN_B
-  return 1 2>/dev/null || exit 1
-}
+# Découvre automatiquement TEACHER_A_EMAIL, TEACHER_B_EMAIL, etc.
+TEACHER_ALIASES=$(
+  grep -E '^TEACHER_[A-Za-z0-9]+_EMAIL=' "$BATTLE_ENV" \
+    | sed -E 's/^TEACHER_([A-Za-z0-9]+)_EMAIL=.*/\1/' \
+    | sort -u
+)
 
-echo "🔐 Authentification Teacher B..."
-TOKEN_B=$(get_token "$TEACHER_B_EMAIL" "$TEACHER_B_PASSWORD") || {
-  echo "❌ Échec authentification Teacher B"
-  unset TOKEN_A TOKEN_B
-  return 1 2>/dev/null || exit 1
-}
+if [ -z "$TEACHER_ALIASES" ]; then
+  echo "❌ Aucun compte TEACHER_<ALIAS>_EMAIL trouvé dans $BATTLE_ENV"
+  battle_auth_finish 1
+fi
 
-export TOKEN_A
-export TOKEN_B
+echo "🔐 Authentification des comptes Battle DEV..."
+echo
 
-echo "✅ TOKEN_A OK"
-echo "✅ TOKEN_B OK"
+tokens_ok=0
+auth_errors=0
+incomplete=0
+
+for alias in $TEACHER_ALIASES; do
+  email_var="TEACHER_${alias}_EMAIL"
+  password_var="TEACHER_${alias}_PASSWORD"
+  token_var="TOKEN_${alias}"
+
+  email="${!email_var:-}"
+  password="${!password_var:-}"
+
+  unset "$token_var"
+
+  if [ -z "$email" ] || [ -z "$password" ]; then
+    echo "⚠️  Teacher $alias — ${email:-email manquant} — credentials incomplets"
+    incomplete=$((incomplete + 1))
+    continue
+  fi
+
+  token=$(get_token "$email" "$password")
+  if [ $? -ne 0 ] || [ -z "$token" ]; then
+    echo "❌ Teacher $alias — $email — échec authentification"
+    auth_errors=$((auth_errors + 1))
+    continue
+  fi
+
+  printf -v "$token_var" '%s' "$token"
+  export "$token_var"
+
+  echo "✅ Teacher $alias — $email — TOKEN_$alias OK"
+  tokens_ok=$((tokens_ok + 1))
+done
+
+echo
+echo "Tokens disponibles      : $tokens_ok"
+echo "Comptes en erreur       : $auth_errors"
+echo "Credentials incomplets  : $incomplete"
+
+if [ "$tokens_ok" -eq 0 ]; then
+  battle_auth_finish 1
+fi
+
+battle_auth_finish 0
