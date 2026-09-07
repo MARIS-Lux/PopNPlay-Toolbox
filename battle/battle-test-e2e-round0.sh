@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 API="http://localhost:3001"
 FRONTEND="http://localhost:5173"
@@ -27,28 +28,28 @@ echo "✅ Backend accessible (HTTP $HTTP_CODE)"
 
 echo
 echo "[2] Authentification Teachers..."
-source toolbox/battle-test-auth.sh || fail "Authentification impossible"
+source "$SCRIPT_DIR/battle-test-auth.sh" || fail "Authentification impossible"
 
 echo
 echo "[3] Création de la Battle..."
-source toolbox/battle-test-create.sh || fail "Création Battle impossible"
+source "$SCRIPT_DIR/battle-test-create.sh" || fail "Création Battle impossible"
 
 [[ -n "${BATTLE_ID:-}" ]] || fail "BATTLE_ID absent"
-[[ -n "${PARTICIPANT_A_ID:-}" ]] || fail "PARTICIPANT_A_ID absent"
-[[ -n "${PARTICIPANT_B_ID:-}" ]] || fail "PARTICIPANT_B_ID absent"
-[[ -n "${JOIN_CODE_A:-}" ]] || fail "JOIN_CODE_A absent"
-[[ -n "${JOIN_CODE_B:-}" ]] || fail "JOIN_CODE_B absent"
+[[ -n "${HOST_PARTICIPANT_ID:-}" ]] || fail "HOST_PARTICIPANT_ID absent"
+[[ -n "${GUEST_PARTICIPANT_ID:-}" ]] || fail "GUEST_PARTICIPANT_ID absent"
+[[ -n "${HOST_JOIN_CODE:-}" ]] || fail "HOST_JOIN_CODE absent"
+[[ -n "${GUEST_JOIN_CODE:-}" ]] || fail "GUEST_JOIN_CODE absent"
 
 echo
 echo "------------------------------------------------------------"
 echo "👤 ÉTAPE MANUELLE — connecter les élèves"
 echo "------------------------------------------------------------"
 echo
-echo "Classe A :"
-echo "$FRONTEND/battle/student?code=$JOIN_CODE_A"
+echo "HOST — $HOST_CLASS_NAME (Teacher $HOST_ALIAS) :"
+echo "$FRONTEND/battle/student?code=$HOST_JOIN_CODE"
 echo
-echo "Classe B :"
-echo "$FRONTEND/battle/student?code=$JOIN_CODE_B"
+echo "GUEST — $GUEST_CLASS_NAME (Teacher $GUEST_ALIAS) :"
+echo "$FRONTEND/battle/student?code=$GUEST_JOIN_CODE"
 echo
 echo "Connecte au moins UN élève de chaque classe."
 echo "Arrête-toi lorsque les deux élèves sont dans leur lobby Battle."
@@ -59,13 +60,13 @@ echo
 echo "✅ Pause manuelle terminée."
 echo
 echo "BATTLE_ID=$BATTLE_ID"
-echo "PARTICIPANT_A_ID=$PARTICIPANT_A_ID"
-echo "PARTICIPANT_B_ID=$PARTICIPANT_B_ID"
+echo "HOST_PARTICIPANT_ID=$HOST_PARTICIPANT_ID"
+echo "GUEST_PARTICIPANT_ID=$GUEST_PARTICIPANT_ID"
 echo
 echo "[4] Vérification état PRE-START..."
 
 HQ_JSON=$(curl -sS \
-  -H "Authorization: Bearer $TOKEN_A" \
+  -H "Authorization: Bearer $HOST_TOKEN" \
   "$API/api/teacher/battles/$BATTLE_ID/hq") || fail "Lecture HQ impossible"
 
 echo "$HQ_JSON" | jq -e '
@@ -81,51 +82,51 @@ echo "$HQ_JSON" | jq -e '
 echo "✅ PREPARING — 2 participants actifs — 0/2 READY"
 
 echo
-echo "[5] Passage READY Teacher A..."
+echo "[5] Passage READY HOST..."
 
 READY_A_JSON=$(curl -sS -X POST \
   "$API/api/teacher/battles/$BATTLE_ID/ready" \
-  -H "Authorization: Bearer $TOKEN_A" \
-  -H "Content-Type: application/json") || fail "READY Teacher A impossible"
+  -H "Authorization: Bearer $HOST_TOKEN" \
+  -H "Content-Type: application/json") || fail "READY HOST impossible"
 
 echo "$READY_A_JSON" | jq -e \
-  --arg participant "$PARTICIPANT_A_ID" \
+  --arg participant "$HOST_PARTICIPANT_ID" \
   '.id == $participant and .status == "READY" and .readyAt != null' \
   >/dev/null || {
     echo "$READY_A_JSON" | jq .
-    fail "Réponse READY Teacher A invalide"
+    fail "Réponse READY HOST invalide"
   }
 
-echo "✅ Teacher A READY"
+echo "✅ HOST READY"
 
 echo
-echo "[6] Passage READY Teacher B..."
+echo "[6] Passage READY GUEST..."
 
 READY_B_JSON=$(curl -sS -X POST \
   "$API/api/teacher/battles/$BATTLE_ID/ready" \
-  -H "Authorization: Bearer $TOKEN_B" \
-  -H "Content-Type: application/json") || fail "READY Teacher B impossible"
+  -H "Authorization: Bearer $GUEST_TOKEN" \
+  -H "Content-Type: application/json") || fail "READY GUEST impossible"
 
 echo "$READY_B_JSON" | jq -e \
-  --arg participant "$PARTICIPANT_B_ID" \
+  --arg participant "$GUEST_PARTICIPANT_ID" \
   '.id == $participant and .status == "READY" and .readyAt != null' \
   >/dev/null || {
     echo "$READY_B_JSON" | jq .
-    fail "Réponse READY Teacher B invalide"
+    fail "Réponse READY GUEST invalide"
   }
 
-echo "✅ Teacher B READY"
+echo "✅ GUEST READY"
 
 echo
 echo "[7] Vérification 2/2 READY..."
 
 HQ_JSON=$(curl -sS \
-  -H "Authorization: Bearer $TOKEN_A" \
+  -H "Authorization: Bearer $HOST_TOKEN" \
   "$API/api/teacher/battles/$BATTLE_ID/hq") || fail "Lecture HQ impossible"
 
 echo "$HQ_JSON" | jq -e \
-  --arg pa "$PARTICIPANT_A_ID" \
-  --arg pb "$PARTICIPANT_B_ID" '
+  --arg pa "$HOST_PARTICIPANT_ID" \
+  --arg pb "$GUEST_PARTICIPANT_ID" '
     .battle.status == "PREPARING"
     and .readiness.activeParticipants == 2
     and .readiness.readyParticipants == 2
@@ -162,7 +163,7 @@ echo "------------------------------------------------------------"
 echo "🚀 ÉTAPE MANUELLE — START"
 echo "------------------------------------------------------------"
 echo
-echo "Sur l'écran Teacher A (HOST) :"
+echo "Sur l'écran Teacher $HOST_ALIAS (HOST) :"
 echo "  1. Clique sur « Démarrer la Battle »"
 echo "  2. Observe immédiatement les DEUX écrans élèves"
 echo
@@ -198,8 +199,8 @@ echo "🎮 ACTIONS ÉLÈVES — ROUND 0"
 echo "------------------------------------------------------------"
 echo
 echo "Pendant un round jouable :"
-echo "  1. Effectue au moins UNE action avec l'élève de Classe A"
-echo "  2. Effectue au moins UNE action avec l'élève de Classe B"
+echo "  1. Effectue au moins UNE action avec l'élève du HOST"
+echo "  2. Effectue au moins UNE action avec l'élève du GUEST"
 echo
 echo "Peu importe ici que la réponse soit correcte ou incorrecte."
 echo
@@ -233,10 +234,10 @@ echo "🔎 VALIDATION AUTOMATIQUE DB / RUNTIME"
 echo "============================================================"
 
 if [[ -z "${DEV_DB_URL:-}" ]]; then
-  [[ -f toolbox/.env.toolbox ]] || fail "toolbox/.env.toolbox introuvable"
+  [[ -f "$SCRIPT_DIR/../.env.toolbox" ]] || fail ".env.toolbox introuvable"
 
   set -a
-  source toolbox/.env.toolbox
+  source "$SCRIPT_DIR/../.env.toolbox"
   set +a
 fi
 
@@ -248,8 +249,8 @@ echo "[DB1] Vérification des 2 runtimes..."
 
 DB_RUNTIME=$(psql "$DEV_DB_URL" -X --no-psqlrc -At -F '|' -v ON_ERROR_STOP=1 \
   -v battle_id="$BATTLE_ID" \
-  -v participant_a="$PARTICIPANT_A_ID" \
-  -v participant_b="$PARTICIPANT_B_ID" <<'SQL'
+  -v participant_a="$HOST_PARTICIPANT_ID" \
+  -v participant_b="$GUEST_PARTICIPANT_ID" <<'SQL'
 SELECT
   COUNT(*) FILTER (
     WHERE bp.id IN (:'participant_a'::uuid, :'participant_b'::uuid)
@@ -291,8 +292,8 @@ echo "[DB2] Vérification de la persistance des réponses..."
 
 DB_ANSWERS=$(psql "$DEV_DB_URL" -X --no-psqlrc -At -F '|' -v ON_ERROR_STOP=1 \
   -v battle_id="$BATTLE_ID" \
-  -v participant_a="$PARTICIPANT_A_ID" \
-  -v participant_b="$PARTICIPANT_B_ID" <<'SQL'
+  -v participant_a="$HOST_PARTICIPANT_ID" \
+  -v participant_b="$GUEST_PARTICIPANT_ID" <<'SQL'
 SELECT
   COUNT(*) FILTER (WHERE bp.id = :'participant_a'::uuid),
   COUNT(*) FILTER (WHERE bp.id = :'participant_b'::uuid),
@@ -334,8 +335,8 @@ echo "[DB3] Mesure de synchronisation des fins de runtime..."
 
 END_DELTA_MS=$(psql "$DEV_DB_URL" -X --no-psqlrc -At -v ON_ERROR_STOP=1 \
   -v battle_id="$BATTLE_ID" \
-  -v participant_a="$PARTICIPANT_A_ID" \
-  -v participant_b="$PARTICIPANT_B_ID" <<'SQL'
+  -v participant_a="$HOST_PARTICIPANT_ID" \
+  -v participant_b="$GUEST_PARTICIPANT_ID" <<'SQL'
 SELECT ROUND(
   EXTRACT(EPOCH FROM (MAX(gs.completed_at) - MIN(gs.completed_at))) * 1000
 )::bigint
