@@ -1,0 +1,6 @@
+.bolt-work/
+.bolt-work-v5/
+
+# Local secrets / environments
+.env
+.env.*
