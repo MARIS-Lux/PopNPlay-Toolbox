@@ -109,6 +109,7 @@ npm install
 
 cd "$PROJECT_ROOT/shared"
 npm install
+npm run build
 
 cd "$PROJECT_ROOT/server"
 npm install
