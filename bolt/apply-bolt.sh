@@ -36,7 +36,20 @@ echo "==> [2/6] Restauration des fichiers protégés..."
 
 git restore frontend/package.json
 git restore frontend/package-lock.json
+git restore server/package.json
 git restore server/package-lock.json
+
+# Migration analytics : Bolt simplifie ce nom alors que Git suit
+# volontairement le nom historique avec double timestamp / .sql.sql.
+BAD_ANALYTICS_MIGRATION="supabase/migrations/20260718210006_sprint_3_2_1_identity_rattachement_analytics.sql"
+GOOD_ANALYTICS_MIGRATION="supabase/migrations/20260718210006_20260718120000_sprint_3_2_1_identity_rattachement_analytics.sql.sql"
+
+if [[ -f "$BAD_ANALYTICS_MIGRATION" ]]; then
+  mv "$BAD_ANALYTICS_MIGRATION" "$GOOD_ANALYTICS_MIGRATION"
+  echo "    ✓ Migration analytics remise sous son nom Git"
+else
+  echo "    - Migration analytics déjà correctement nommée"
+fi
 
 # Migration 1 : normalisation du nom
 BAD_MIGRATION_1="supabase/migrations/20260830104628_20260830120000_add_battle_round_advancement_mode.sql.sql"
@@ -81,13 +94,6 @@ cp "$BACKUP_ROOT/frontend/.env.staging" frontend/.env
 cp "$BACKUP_ROOT"/frontend/.env.* frontend/
 cp "$BACKUP_ROOT"/server/.env.* server/
 
-# Ancien toolbox produit encore restauré pour compatibilité.
-cp -r "$BACKUP_ROOT/toolbox/." toolbox/
-
-chmod +x toolbox/scripts/deploy-full.sh 2>/dev/null || true
-chmod +x toolbox/* 2>/dev/null || true
-chmod +x toolbox/scripts/* 2>/dev/null || true
-
 echo "    ✓ Environnement local restauré"
 
 
@@ -106,7 +112,6 @@ npm install
 
 cd "$PROJECT_ROOT/server"
 npm install
-npm install --save-dev @nestjs/testing@^10.4.22
 
 cd "$PROJECT_ROOT/frontend"
 npm install
