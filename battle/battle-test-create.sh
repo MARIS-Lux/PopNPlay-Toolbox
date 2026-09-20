@@ -546,13 +546,26 @@ fi
 echo
 echo "=== 7. WAIT FOR PLAYERS ==="
 echo
-echo "HOST STUDENT — $HOST_CLASS_NAME"
+
+while true; do
+  read -r -p "Nombre de joueurs par classe [1] : " PLAYER_COUNT
+  PLAYER_COUNT="${PLAYER_COUNT:-1}"
+
+  if [[ "$PLAYER_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+    break
+  fi
+
+  echo "❌ Indique un nombre entier supérieur ou égal à 1."
+done
+
+echo
+echo "HOST STUDENTS — $HOST_CLASS_NAME"
 echo "  http://localhost:5173/join?code=$HOST_JOIN_CODE"
 echo
-echo "GUEST STUDENT — $GUEST_CLASS_NAME"
+echo "GUEST STUDENTS — $GUEST_CLASS_NAME"
 echo "  http://localhost:5173/join?code=$GUEST_JOIN_CODE"
 echo
-echo "⏳ En attente d'au moins 1 joueur dans chaque roster..."
+echo "⏳ En attente de $PLAYER_COUNT joueur(s) dans chaque roster..."
 
 while true; do
   HOST_ROSTER_COUNT=$(psql "$DEV_DB_URL" -X --no-psqlrc -At -c "
@@ -567,19 +580,20 @@ while true; do
     WHERE battle_participant_id = '$GUEST_PARTICIPANT_ID'::uuid;
   ")
 
-  if (( HOST_ROSTER_COUNT >= 1 && GUEST_ROSTER_COUNT >= 1 )); then
+  if (( HOST_ROSTER_COUNT >= PLAYER_COUNT && GUEST_ROSTER_COUNT >= PLAYER_COUNT )); then
     break
   fi
 
-  printf "\r   HOST: %s joueur(s) | GUEST: %s joueur(s) " \
-    "$HOST_ROSTER_COUNT" "$GUEST_ROSTER_COUNT"
+  printf "\r   HOST: %s/%s joueur(s) | GUEST: %s/%s joueur(s) " \
+    "$HOST_ROSTER_COUNT" "$PLAYER_COUNT" \
+    "$GUEST_ROSTER_COUNT" "$PLAYER_COUNT"
 
   sleep 1
 done
 
 echo
-echo "✅ Joueur HOST détecté"
-echo "✅ Joueur GUEST détecté"
+echo "✅ $HOST_ROSTER_COUNT/$PLAYER_COUNT joueur(s) HOST détecté(s)"
+echo "✅ $GUEST_ROSTER_COUNT/$PLAYER_COUNT joueur(s) GUEST détecté(s)"
 
 echo
 echo "=== 8. READY TEACHERS ==="
