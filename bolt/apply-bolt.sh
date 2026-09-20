@@ -43,6 +43,7 @@ git restore server/package-lock.json
 # volontairement le nom historique avec double timestamp / .sql.sql.
 BAD_ANALYTICS_MIGRATION="supabase/migrations/20260718210006_sprint_3_2_1_identity_rattachement_analytics.sql"
 GOOD_ANALYTICS_MIGRATION="supabase/migrations/20260718210006_20260718120000_sprint_3_2_1_identity_rattachement_analytics.sql.sql"
+GOOD_BATTLE_1B8_3_MIGRATION="supabase/migrations/20260917151624_20260917170000_battle_1b8_3_create_battle_with_class_rpc.sql.sql"
 
 if [[ -f "$BAD_ANALYTICS_MIGRATION" ]]; then
   mv "$BAD_ANALYTICS_MIGRATION" "$GOOD_ANALYTICS_MIGRATION"
@@ -139,11 +140,6 @@ if grep -q '"history":' frontend/package.json; then
   exit 1
 fi
 
-if find supabase/migrations -name '*.sql.sql' | grep -q .; then
-  echo "ERREUR: migration *.sql.sql détectée :"
-  find supabase/migrations -name '*.sql.sql'
-  exit 1
-fi
 
 if ! grep -A5 -B5 "phase = 'PREPARED'" "$GOOD_MIGRATION_2" | grep -q 'round_index = 0'; then
   echo "ERREUR: protection round_index = 0 absente de la migration rollback"

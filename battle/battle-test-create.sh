@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 API="${POPNPLAY_API_URL:-http://localhost:3001}"
-ACTIVITY_ID="${ACTIVITY_ID:-fdd39fe9-d0de-4b13-aa2a-220f89944174}"
+ACTIVITY_ID="${ACTIVITY_ID:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLBOX_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -23,6 +23,169 @@ fi
 command -v psql >/dev/null 2>&1 || fail "psql introuvable."
 command -v curl >/dev/null 2>&1 || fail "curl introuvable."
 command -v jq >/dev/null 2>&1 || fail "jq introuvable."
+
+# ---------------------------------------------------------------------------
+# Sélection de l'activité
+# ---------------------------------------------------------------------------
+
+if [[ -z "$ACTIVITY_ID" ]]; then
+  ACTIVITIES=()
+
+  while IFS='|' read -r db_activity_id db_activity_name db_game_id; do
+    [[ -z "$db_activity_id" ]] && continue
+    ACTIVITIES+=("$db_activity_id|$db_activity_name|$db_game_id")
+  done < <(
+    psql "$DEV_DB_URL" -X --no-psqlrc -At -F '|' -c "
+      SELECT
+        id,
+        name,
+        game_id
+      FROM public.activities
+      WHERE status = 'active'
+        AND is_archived = false
+      ORDER BY name, created_at DESC;
+    "
+  )
+
+  if [[ ${#ACTIVITIES[@]} -eq 0 ]]; then
+    fail "Aucune activité active/non archivée trouvée en DEV."
+  fi
+
+  echo
+  echo "🎮 Activités disponibles"
+  echo
+
+  i=1
+  for row in "${ACTIVITIES[@]}"; do
+    IFS='|' read -r display_activity_id display_activity_name display_game_id <<< "$row"
+
+    printf "%d) %s\n" "$i" "$display_activity_name"
+    echo "   Jeu : $display_game_id"
+    echo
+
+    i=$((i + 1))
+  done
+
+  # Activité DEV par défaut : testMU
+  default_activity_choice=""
+
+  i=1
+  for row in "${ACTIVITIES[@]}"; do
+    IFS='|' read -r _ activity_name _ <<< "$row"
+
+    if [[ "$activity_name" == "testMU" ]]; then
+      default_activity_choice="$i"
+      break
+    fi
+
+    i=$((i + 1))
+  done
+
+  while true; do
+    if [[ -n "$default_activity_choice" ]]; then
+      read -r -p "Choisir l'activité [${default_activity_choice}=testMU] : " activity_choice
+      activity_choice="${activity_choice:-$default_activity_choice}"
+    else
+      read -r -p "Choisir l'activité [1-${#ACTIVITIES[@]}] : " activity_choice
+    fi
+
+    case "$activity_choice" in
+      ''|*[!0-9]*)
+        echo "❌ Choix invalide : indique un numéro."
+        continue
+        ;;
+    esac
+
+    if (( activity_choice < 1 || activity_choice > ${#ACTIVITIES[@]} )); then
+      echo "❌ Numéro hors liste."
+      continue
+    fi
+
+    break
+  done
+
+  ACTIVITY_ROW="${ACTIVITIES[$((activity_choice - 1))]}"
+  IFS='|' read -r ACTIVITY_ID ACTIVITY_NAME ACTIVITY_GAME_ID <<< "$ACTIVITY_ROW"
+
+else
+  ACTIVITY_ROW="$(
+    psql "$DEV_DB_URL" -X --no-psqlrc -At -F '|' -c "
+      SELECT
+        id,
+        name,
+        game_id
+      FROM public.activities
+      WHERE id = '$ACTIVITY_ID'::uuid
+      LIMIT 1;
+    "
+  )"
+
+  if [[ -z "$ACTIVITY_ROW" ]]; then
+    fail "ACTIVITY_ID introuvable en DEV : $ACTIVITY_ID"
+  fi
+
+  IFS='|' read -r ACTIVITY_ID ACTIVITY_NAME ACTIVITY_GAME_ID <<< "$ACTIVITY_ROW"
+fi
+
+echo
+echo "✅ Activité sélectionnée"
+echo "   Nom         : $ACTIVITY_NAME"
+echo "   Jeu         : $ACTIVITY_GAME_ID"
+echo "   ACTIVITY_ID : $ACTIVITY_ID"
+echo
+
+# ---------------------------------------------------------------------------
+# Configuration Battle optionnelle
+# ---------------------------------------------------------------------------
+
+read -r -p "Configurer les règles Battle pour ce test ? [y/N] : " configure_battle
+configure_battle="${configure_battle:-N}"
+
+CONFIGURE_BATTLE=false
+ROUND_END_MODE=""
+ROUND_ADVANCEMENT_MODE=""
+
+if [[ "$configure_battle" =~ ^[Yy]$ ]]; then
+  CONFIGURE_BATTLE=true
+
+  echo
+  echo "Fin de manche :"
+  echo "1) ALL_COMPLETED"
+  echo "2) FIRST_COMPLETED"
+  echo "3) TIMER_ONLY"
+  read -r -p "Choix [1] : " round_end_choice
+  round_end_choice="${round_end_choice:-1}"
+
+  case "$round_end_choice" in
+    1) ROUND_END_MODE="ALL_COMPLETED" ;;
+    2) ROUND_END_MODE="FIRST_COMPLETED" ;;
+    3) ROUND_END_MODE="TIMER_ONLY" ;;
+    *) fail "Choix Fin de manche invalide." ;;
+  esac
+
+  echo
+  echo "Avancement après révélation :"
+  echo "1) AUTOMATIC"
+  echo "2) HOST_CONTROLLED"
+  read -r -p "Choix [1] : " round_advancement_choice
+  round_advancement_choice="${round_advancement_choice:-1}"
+
+  case "$round_advancement_choice" in
+    1) ROUND_ADVANCEMENT_MODE="AUTOMATIC" ;;
+    2) ROUND_ADVANCEMENT_MODE="HOST_CONTROLLED" ;;
+    *) fail "Choix Avancement invalide." ;;
+  esac
+
+  echo
+  echo "Configuration Battle demandée :"
+  echo "  Fin de manche : $ROUND_END_MODE"
+  echo "  Avancement    : $ROUND_ADVANCEMENT_MODE"
+else
+  echo
+  echo "ℹ️ Configuration Battle : valeurs par défaut applicatives"
+fi
+
+echo
 
 set -a
 source "$BATTLE_ENV"
@@ -354,8 +517,106 @@ fi
 echo "✅ $GUEST_CLASS_NAME ajoutée"
 
 echo
+echo "=== 6. CONFIGURE BATTLE ==="
+
+if [[ "$CONFIGURE_BATTLE" == true ]]; then
+  CONFIG_JSON=$(curl -sS -X PATCH \
+    "$API/api/teacher/battles/$BATTLE_ID" \
+    -H "Authorization: Bearer $HOST_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"roundEndMode\":\"$ROUND_END_MODE\",
+      \"roundAdvancementMode\":\"$ROUND_ADVANCEMENT_MODE\"
+    }")
+
+  CONFIG_ERROR=$(echo "$CONFIG_JSON" | jq -r '.message // empty' 2>/dev/null)
+
+  if [[ -n "$CONFIG_ERROR" ]]; then
+    echo "❌ Configuration Battle impossible :"
+    echo "$CONFIG_JSON" | jq . 2>/dev/null || echo "$CONFIG_JSON"
+    return 1 2>/dev/null || exit 1
+  fi
+
+  echo "✅ Fin de manche : $ROUND_END_MODE"
+  echo "✅ Avancement    : $ROUND_ADVANCEMENT_MODE"
+else
+  echo "ℹ️ Valeurs par défaut applicatives conservées"
+fi
+
+echo
+echo "=== 7. WAIT FOR PLAYERS ==="
+echo
+echo "HOST STUDENT — $HOST_CLASS_NAME"
+echo "  http://localhost:5173/join?code=$HOST_JOIN_CODE"
+echo
+echo "GUEST STUDENT — $GUEST_CLASS_NAME"
+echo "  http://localhost:5173/join?code=$GUEST_JOIN_CODE"
+echo
+echo "⏳ En attente d'au moins 1 joueur dans chaque roster..."
+
+while true; do
+  HOST_ROSTER_COUNT=$(psql "$DEV_DB_URL" -X --no-psqlrc -At -c "
+    SELECT COUNT(*)
+    FROM public.battle_roster_players
+    WHERE battle_participant_id = '$HOST_PARTICIPANT_ID'::uuid;
+  ")
+
+  GUEST_ROSTER_COUNT=$(psql "$DEV_DB_URL" -X --no-psqlrc -At -c "
+    SELECT COUNT(*)
+    FROM public.battle_roster_players
+    WHERE battle_participant_id = '$GUEST_PARTICIPANT_ID'::uuid;
+  ")
+
+  if (( HOST_ROSTER_COUNT >= 1 && GUEST_ROSTER_COUNT >= 1 )); then
+    break
+  fi
+
+  printf "\r   HOST: %s joueur(s) | GUEST: %s joueur(s) " \
+    "$HOST_ROSTER_COUNT" "$GUEST_ROSTER_COUNT"
+
+  sleep 1
+done
+
+echo
+echo "✅ Joueur HOST détecté"
+echo "✅ Joueur GUEST détecté"
+
+echo
+echo "=== 8. READY TEACHERS ==="
+
+HOST_READY_JSON=$(curl -sS -X POST \
+  "$API/api/teacher/battles/$BATTLE_ID/ready" \
+  -H "Authorization: Bearer $HOST_TOKEN" \
+  -H "Content-Type: application/json")
+
+HOST_READY_STATUS=$(echo "$HOST_READY_JSON" | jq -r '.status // empty')
+
+if [[ "$HOST_READY_STATUS" != "READY" ]]; then
+  echo "❌ READY HOST impossible :"
+  echo "$HOST_READY_JSON" | jq . 2>/dev/null || echo "$HOST_READY_JSON"
+  return 1 2>/dev/null || exit 1
+fi
+
+echo "✅ Teacher $HOST_ALIAS READY"
+
+GUEST_READY_JSON=$(curl -sS -X POST \
+  "$API/api/teacher/battles/$BATTLE_ID/ready" \
+  -H "Authorization: Bearer $GUEST_TOKEN" \
+  -H "Content-Type: application/json")
+
+GUEST_READY_STATUS=$(echo "$GUEST_READY_JSON" | jq -r '.status // empty')
+
+if [[ "$GUEST_READY_STATUS" != "READY" ]]; then
+  echo "❌ READY GUEST impossible :"
+  echo "$GUEST_READY_JSON" | jq . 2>/dev/null || echo "$GUEST_READY_JSON"
+  return 1 2>/dev/null || exit 1
+fi
+
+echo "✅ Teacher $GUEST_ALIAS READY"
+
+echo
 echo "============================================================"
-echo "⚔️  BATTLE DEV PRÊTE"
+echo "⚔️  BATTLE DEV PRÊTE À DÉMARRER"
 echo "============================================================"
 echo "BATTLE_ID=$BATTLE_ID"
 echo "BATTLE_CODE=$BATTLE_CODE"
@@ -363,10 +624,13 @@ echo
 echo "HOST — $HOST_CLASS_NAME (Teacher $HOST_ALIAS)"
 echo "  PARTICIPANT_ID=$HOST_PARTICIPANT_ID"
 echo "  JOIN_CODE=$HOST_JOIN_CODE"
-echo "  http://localhost:5173/battle/student?code=$HOST_JOIN_CODE"
+echo "  http://localhost:5173/join?code=$HOST_JOIN_CODE"
 echo
 echo "GUEST — $GUEST_CLASS_NAME (Teacher $GUEST_ALIAS)"
 echo "  PARTICIPANT_ID=$GUEST_PARTICIPANT_ID"
 echo "  JOIN_CODE=$GUEST_JOIN_CODE"
-echo "  http://localhost:5173/battle/student?code=$GUEST_JOIN_CODE"
+echo "  http://localhost:5173/join?code=$GUEST_JOIN_CODE"
+echo
+echo "👉 Joueurs connectés + Teachers READY"
+echo "�� Teacher $HOST_ALIAS : cliquer DÉMARRER"
 echo "============================================================"
