@@ -164,3 +164,34 @@ echo "============================================================"
 echo " Bolt apply terminé."
 echo " Repository : $PROJECT_ROOT"
 echo "============================================================"
+
+# POST-BOLT-STATUS
+# ---------------------------------------------------------------------------
+# Restore toolbox + final Git state for easy copy/paste
+# ---------------------------------------------------------------------------
+
+cd "$PROJECT_ROOT"
+
+git restore toolbox/
+
+echo
+echo "============================================================"
+echo " BOLT APPLY COMPLETE — COPY/PASTE BELOW TO CHATGPT"
+echo "============================================================"
+
+echo
+echo ">>> branch"
+git branch --show-current
+
+echo
+echo ">>> git status --short"
+git status --short
+
+echo
+echo ">>> git diff --stat"
+git diff --stat
+
+echo
+echo "============================================================"
+echo " END POST-BOLT STATUS"
+echo "============================================================"
